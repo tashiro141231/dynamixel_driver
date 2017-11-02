@@ -42,6 +42,7 @@ __maintainer__ = 'Antons Rebguns'
 __email__ = 'anton@email.arizona.edu'
 
 
+import time
 import math
 import sys
 import errno
@@ -72,9 +73,9 @@ class SerialProxy():
                  port_name='/dev/ttyUSB0',
                  port_namespace='ttyUSB0',
                  baud_rate='1000000',
-                 min_motor_id=1,
-                 max_motor_id=25,
-                 update_rate=5,
+                 min_motor_id=10,
+                 max_motor_id=39,
+                 update_rate=20,
                  diagnostics_rate=1,
                  error_level_temp=75,
                  warn_level_temp=70,
@@ -90,11 +91,14 @@ class SerialProxy():
         self.warn_level_temp = warn_level_temp
         self.readback_echo = readback_echo
 	self.target_position = [0 for _ in range(JointNumber)]
-        
+	self.joint_torque_on = [True for _ in range(JointNumber)]
+	self.joint_ready = [False for _ in range(JointNumber)]
+        self.is_Subscribing = None
+
         self.actual_rate = update_rate
         self.error_counts = {'non_fatal': 0, 'checksum': 0, 'dropped': 0}
         self.current_state = MotorStateList()
-        self.num_ping_retries = 20
+        self.num_ping_retries = 5
         
         self.motor_states_pub = rospy.Publisher('motor_states/%s' % self.port_namespace, MotorStateList, queue_size=1)
         self.diagnostics_pub = rospy.Publisher('/diagnostics', DiagnosticArray, queue_size=1)
@@ -102,7 +106,9 @@ class SerialProxy():
     def connect(self):
         try:
             self.dxl_io = dynamixel_io.DynamixelIO(self.port_name, self.baud_rate, self.readback_echo)
-            self.__find_motors()
+	    # for MotorID in rang(10,JointNumber+10):
+	    # 	self.dxl_io.write_without_response(MotorID, DXL_RETURN_LEVEL, [0x02])
+	    self.__find_motors()
         except dynamixel_io.SerialOpenError, e:
             rospy.logfatal(e.message)
             sys.exit(1)
@@ -111,52 +117,104 @@ class SerialProxy():
 	
 	self.InitMotors()
 
+	# rospy.Subscriber('joint_command', SnakeJointCommand, self.RespondToRequest,None,1)
 	rospy.Subscriber('joint_command', SnakeJointCommand, self.RespondToRequest)
-	rospy.Subscriber('joint_target_position', SnakeJointData, self.ReceiveJointPosition)
+	# rospy.Subscriber('joint_target_position', SnakeJointData, self.ReceiveJointPosition)
         
-	if self.update_rate > 0: Thread(target=self.__update_motor_states).start()
-        if self.diagnostics_rate > 0: Thread(target=self.__publish_diagnostic_information).start()
+	# if self.update_rate > 0: Thread(target=self.__update_motor_states).start()
+        # if self.diagnostics_rate > 0: Thread(target=self.__publish_diagnostic_information).start()
 
     def disconnect(self):
         self.running = False
 
     def InitMotors(self):
+    	total = 0
+	total2 = 0
 	for MotorID in self.motors:
 		#リターンレベル、ディバイダー、マルチターンオフセット、EEROMのロックの設定
-		self.dxl_io.write_without_response(MotorID, DXL_RETURN_LEVEL, [0x02])
-		self.dxl_io.write_without_response(MotorID, DXL_RESOLUTION_DEVIDER, [0x01])
-		self.dxl_io.write_without_response(MotorID, DXL_MULTI_TURN_OFFSET_L, [0,0])
+		start_s1 = time.clock()
+		self.dxl_io.write(MotorID, DXL_RETURN_LEVEL, [0x02])
+		self.dxl_io.write(MotorID, DXL_RESOLUTION_DEVIDER, [0x01])
+		self.dxl_io.write(MotorID, DXL_MULTI_TURN_OFFSET_L, [0,0])
+		# self.dxl_io.write_without_response(MotorID, DXL_RETURN_LEVEL, [0x02])
+		# self.dxl_io.write_without_response(MotorID, DXL_RESOLUTION_DEVIDER, [0x01])
+		# self.dxl_io.write_without_response(MotorID, DXL_MULTI_TURN_OFFSET_L, [0,0])
 		self.dxl_io.write(MotorID, DXL_LOCK, [0x01])
+		self.dxl_io.write(MotorID, DXL_RETURN_DELAY_TIME, [0xFA]);
 		#ジョイントモードへ(± 90度の角度制限)
 		self.dxl_io.set_angle_limit_cw(MotorID, 1023)
 		self.dxl_io.set_angle_limit_ccw(MotorID, 3071)
+		end_s1 = time.clock() - start_s1
+		print "T1 = %f [ms]" %(end_s1*1000)
 
 		#ヘビ型の角度イニシャライズ
+		start_s = time.clock()
 		self.dxl_io.set_position(MotorID, 2047)
-		
+		end_s = time.clock() - start_s
+		print "Took %f [ms] for set pos" % (end_s*1000)
+		total += end_s
+		total2 += end_s
+		total2 += end_s1
+	print "______ Total took %f[ms]" %(total2 * 1000)
 
     def ReceiveJointPosition(self ,joint_data):
         joint_angle = int(2047 - joint_data.value / 360 * 4096)
-	print "Joint number: %s Pos: %s" %(str(joint_data.joint_index), str(joint_angle))
+	# print "Joint number: %s Pos: %s" %(str(joint_data.joint_index), str(joint_angle))
 	self.target_position[joint_data.joint_index] = joint_angle
 
     def RespondToRequest(self, joint_command):
-    	if joint_command.ping:
+	self.is_Subscribing = True
+	JOINT_USED = False
+	# start_s3 = time.clock()
+	start_s3 = rospy.get_rostime()
+	if joint_command.ping:
 		self.dxl_io.ping(joint_command.joint_index + 10)
 	if joint_command.set_position or joint_command.set_position_time:
-		self.dxl_io.set_position(joint_command.joint_index + 10, self.target_position[joint_command.joint_index])
+		if joint_command.target_range:
+			JOINT_USED = True
+			total = 0
+			# print "motor %d to %d" %(joint_command.start_joint, joint_command.last_joint)
+			for index in range(joint_command.start_joint, joint_command.last_joint):
+				start_s = time.clock()
+				self.target_position[index - joint_command.start_joint] = int(2047 - joint_command.target_positions[index - joint_command.start_joint] / 360 * 4096)
+				
+				loVal = int(self.target_position[index - joint_command.start_joint] % 256)
+				hiVal = int(self.target_position[index - joint_command.start_joint] >> 8)
+				self.dxl_io.write_without_response(index + 10, DXL_GOAL_POSITION_L, (loVal, hiVal))
+				# self.dxl_io.set_position(index + 10, self.target_position[index - joint_command.start_joint])
+				end_s = time.clock() - start_s
+				total += end_s
+				# rospy.loginfo("took %f [ms] for set", end_s * 1000)
+			# rospy.loginfo("____ Total %f [ms] for sets motors", total * 1000)
+		else:
+			self.target_position[joint_command.joint_index] = int(2047 - joint_command.target_position / 360 * 4097)
+			self.dxl_io.set_position(joint_command.joint_index + 10, self.target_position[joint_command.joint_index])
 	if joint_command.set_pid_gain:
 		self.dxl_io.set_p_gain(joint_command.joint_index + 10, joint_command.p_gain)
 		self.dxl_io.set_i_gain(joint_command.joint_index + 10, joint_command.i_gain)
 		self.dxl_io.set_d_gain(joint_command.joint_index + 10, joint_command.d_gain)
 	if joint_command.set_position_velocity:
 		self.dxl_io.set_position_and_speed(joint_command.joint_index + 10, joint_command.targe_position, joint_commnad.target_velocity)
-	if joint_command.change_mode_to_free:
-		if joint_command.targe_all:
-			for joint_num in range(JointNumber):
-				self.dxl_io.set_torque_enabele(joint_num + 10, 0)
-		else:
-			self.dxl_io.set_torque_enable(joint_command.joint_index, 0)
+	# if joint_command.change_mode_to_free:
+	# 	if joint_command.target_all:
+	# 		for i in range(JointNumber):
+	# 			if self.joint_torque_on[joint_command.joint_index]:
+	# 				print "Motor %d torque off" % (joint_command.joint_index)
+	# 			self.dxl_io.set_torque_enabele(i + 10, 0)
+	# 			self.joint_torque_on[i] = False
+	# 	else:
+	# 		if self.joint_torque_on[joint_command.joint_index]:
+	# 			print "Motor %d torque off" % (joint_command.joint_index)
+	# 		self.dxl_io.set_torque_enable(joint_command.joint_index, 0)
+	# 		self.joint_torque_on[joint_command.joint_index] = False
+	# end_s3 = time.clock()
+	end_s3 = rospy.get_rostime()
+	if JOINT_USED:
+		rospy.loginfo("Set motor %d to %d" ,joint_command.start_joint, joint_command.last_joint)
+		# rospy.loginfo("Callback time = %f [ms]",(end_s3 - start_s3)*1000)
+		rospy.loginfo("Callback time = %f [ms]",(end_s3 - start_s3).to_sec() * 1000)
+
+
 
 
     def __fill_motor_parameters(self, motor_id, model_number):
@@ -212,7 +270,7 @@ class SerialProxy():
         for motor_id in range(self.min_motor_id, self.max_motor_id + 1):
             for trial in range(self.num_ping_retries):
                 try:
-                    result = self.dxl_io.ping(motor_id)
+		    result = self.dxl_io.ping(motor_id)
                 except Exception as ex:
                     rospy.logerr('Exception thrown while pinging motor %d - %s' % (motor_id, ex))
                     continue
@@ -230,8 +288,8 @@ class SerialProxy():
         to_delete_if_error = []
         for motor_id in self.motors:
             for trial in range(self.num_ping_retries):
-                try:
-                    model_number = self.dxl_io.get_model_number(motor_id)
+                try:    
+		    model_number = self.dxl_io.get_model_number(motor_id)
                     self.__fill_motor_parameters(motor_id, model_number)
                 except Exception as ex:
                     rospy.logerr('Exception thrown while getting attributes for motor %d - %s' % (motor_id, ex))

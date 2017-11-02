@@ -44,6 +44,8 @@ __email__ = 'anton@email.arizona.edu'
 
 import time
 import serial
+import rospy
+import roslib 
 from array import array
 from binascii import b2a_hex
 from threading import Lock
@@ -87,8 +89,8 @@ class DynamixelIO(object):
         self.ser.flushInput()
         self.ser.flushOutput()
 	# print 'write' + str([ord(c) for c in data])
-        self.ser.write(data)
-        if self.readback_echo:
+	self.ser.write(data) 
+	if self.readback_echo:
             self.ser.read(len(data))
 
     def __read_response(self, servo_id):
@@ -97,7 +99,7 @@ class DynamixelIO(object):
         try:
             data.extend(self.ser.read(4))
 	    # print 'Read' + str([ord(c) for c in data])
-            if not data[0:2] == ['\xff', '\xff']: raise Exception('Wrong packet prefix %s' % data[0:2])
+	    if not data[0:2] == ['\xff', '\xff']: raise Exception('Wrong packet prefix %s' % data[0:2])
             data.extend(self.ser.read(ord(data[3])))
             data = array('B', ''.join(data)).tolist() # [int(b2a_hex(byte), 16) for byte in data]
         except Exception, e:
@@ -143,8 +145,8 @@ class DynamixelIO(object):
 
         return data
 
-    def write_without_response(self, servo_id, address, data):
-        # Number of bytes following standard header (0xFF, 0xFF, id, length)
+    def write_without_response(self, servo_id, address, data): 
+	# Number of bytes following standard header (0xFF, 0xFF, id, length)
         length = 3 + len(data)  # instruction, address, len(data), checksum
 
         # directly from AX-12 manual:
@@ -159,9 +161,12 @@ class DynamixelIO(object):
 
         packetStr = array('B', packet).tostring() # packetStr = ''.join([chr(byte) for byte in packet])
 
+        # start_s = rospy.get_time()
 	with self.serial_mutex:
 	    self.__write_serial(packetStr)
-
+	# end_s = rospy.get_time()
+	# print "Took %f [s]" %(end_s - start_s)
+    
     def write(self, servo_id, address, data):
         """ Write the values from the "data" list to the servo with "servo_id"
         starting with data[0] at "address", continuing through data[n-1] at
@@ -196,7 +201,7 @@ class DynamixelIO(object):
             time.sleep(0.0013)
 
             # read response
-            data = self.__read_response(servo_id)
+	    data = self.__read_response(servo_id)
             data.append(timestamp)
 
         return data
@@ -260,7 +265,7 @@ class DynamixelIO(object):
 
             # read response
             try:
-                response = self.__read_response(servo_id)
+		response = self.__read_response(servo_id)
                 response.append(timestamp)
             except Exception, e:
                 response = []
@@ -556,6 +561,7 @@ class DynamixelIO(object):
         if response:
             self.exception_on_error(response[4], servo_id, 'setting goal position to %d' % position)
         return response
+	# return True
 
     def set_speed(self, servo_id, speed):
         """
