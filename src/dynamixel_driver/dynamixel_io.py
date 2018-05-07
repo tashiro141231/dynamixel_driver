@@ -88,9 +88,9 @@ class DynamixelIO(object):
     def __write_serial(self, data):
         self.ser.flushInput()
         self.ser.flushOutput()
-	# print 'write' + str([ord(c) for c in data])
-	self.ser.write(data) 
-	if self.readback_echo:
+        print 'write' + str([ord(c) for c in data])
+        self.ser.write(data) 
+        if self.readback_echo:
             self.ser.read(len(data))
 
     def __read_response(self, servo_id):
@@ -98,8 +98,8 @@ class DynamixelIO(object):
 
         try:
             data.extend(self.ser.read(4))
-	    # print 'Read' + str([ord(c) for c in data])
-	    if not data[0:2] == ['\xff', '\xff']: raise Exception('Wrong packet prefix %s' % data[0:2])
+            print 'Read' + str([ord(c) for c in data])
+            if not data[0:2] == ['\xff', '\xff']: raise Exception('Wrong packet prefix %s' % data[0:2])
             data.extend(self.ser.read(ord(data[3])))
             data = array('B', ''.join(data)).tolist() # [int(b2a_hex(byte), 16) for byte in data]
         except Exception, e:
@@ -325,6 +325,15 @@ class DynamixelIO(object):
             self.exception_on_error(response[4], servo_id, 'setting CW angle limits to %d' % angle_cw)
         return response
 
+    def set_angle_limit_cw_without_response(self, servo_id, angle_cw):
+        """
+        Set the min (CW) angle of rotation limit.
+        """
+        loVal = int(angle_cw % 256)
+        hiVal = int(angle_cw >> 8)
+
+        self.write_without_response(servo_id, DXL_CW_ANGLE_LIMIT_L, (loVal, hiVal))
+
     def set_angle_limit_ccw(self, servo_id, angle_ccw):
         """
         Set the max (CCW) angle of rotation limit.
@@ -336,6 +345,15 @@ class DynamixelIO(object):
         if response:
             self.exception_on_error(response[4], servo_id, 'setting CCW angle limits to %d' % angle_ccw)
         return response
+    
+    def set_angle_limit_ccw_without_response(self, servo_id, angle_ccw):
+        """
+        Set the max (CCW) angle of rotation limit.
+        """
+        loVal = int(angle_ccw % 256)
+        hiVal = int(angle_ccw >> 8)
+
+        self.write_without_response(servo_id, DXL_CCW_ANGLE_LIMIT_L, (loVal, hiVal))
 
     def set_angle_limits(self, servo_id, min_angle, max_angle):
         """
@@ -423,6 +441,14 @@ class DynamixelIO(object):
         if response:
             self.exception_on_error(response[4], servo_id, '%sabling torque' % 'en' if enabled else 'dis')
         return response
+
+    def set_torque_enabled_without_response(self, servo_id, enabled):
+        """
+        Sets the value of the torque enabled register to 1 or 0. When the
+        torque is disabled the servo can be moved manually while the motor is
+        still powered.
+        """
+        self.write_without_response(servo_id, DXL_TORQUE_ENABLE, [enabled])
 
     def set_compliance_margin_cw(self, servo_id, margin):
         """
@@ -517,6 +543,27 @@ class DynamixelIO(object):
             self.exception_on_error(response[4], servo_id, 'setting P gain value of PID controller to %d' % p_gain)
         return response
 
+    def set_d_gain_without_response(self, servo_id, d_gain):
+        """
+        Sets the value of derivative action of PID controller.
+        Gain value is in range 0 to 254.
+        """
+        self.write_without_response(servo_id, DXL_D_GAIN, [d_gain])
+
+    def set_i_gain_without_response(self, servo_id, i_gain):
+        """
+        Sets the value of integral action of PID controller.
+        Gain value is in range 0 to 254.
+        """
+        self.write_without_response(servo_id, DXL_I_GAIN, [i_gain])
+
+    def set_p_gain_without_reseponse(self, servo_id, p_gain):
+        """
+        Sets the value of proportional action of PID controller.
+        Gain value is in range 0 to 254.
+        """
+        self.write_without_response(servo_id, DXL_P_GAIN, [p_gain])
+
     def set_punch(self, servo_id, punch):
         """
         Sets the limit value of torque being reduced when the output torque is
@@ -563,6 +610,16 @@ class DynamixelIO(object):
         return response
 	# return True
 
+    def set_position_without_response(self, servo_id, position):
+        """
+        Set the servo with servo_id to the specified goal position.
+        Position value must be positive.
+        """
+        loVal = int(position % 256)
+        hiVal = int(position >> 8)
+
+        self.write_without_response(servo_id, DXL_GOAL_POSITION_L, (loVal, hiVal))
+    
     def set_speed(self, servo_id, speed):
         """
         Set the servo with servo_id to the specified goal speed.
@@ -646,6 +703,25 @@ class DynamixelIO(object):
         if response:
             self.exception_on_error(response[4], servo_id, 'setting goal position to %d and moving speed to %d' %(position, speed))
         return response
+
+    def set_position_and_speed_without_response(self, servo_id, position, speed):
+        """
+        Set the servo with servo_id to specified position and speed.
+        Speed can be negative only if the dynamixel is in "freespin" mode.
+        """
+        # split speed into 2 bytes
+        if speed >= 0:
+            loSpeedVal = int(speed % 256)
+            hiSpeedVal = int(speed >> 8)
+        else:
+            loSpeedVal = int((1023 - speed) % 256)
+            hiSpeedVal = int((1023 - speed) >> 8)
+
+        # split position into 2 bytes
+        loPositionVal = int(position % 256)
+        hiPositionVal = int(position >> 8)
+
+        self.write(servo_id, DXL_GOAL_POSITION_L, (loPositionVal, hiPositionVal, loSpeedVal, hiSpeedVal))
 
     def set_led(self, servo_id, led_state):
         """
