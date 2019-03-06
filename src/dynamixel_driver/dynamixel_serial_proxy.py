@@ -159,17 +159,24 @@ class SerialProxy():
         self.motors = []
         self.motor_static_info = {}
         
-        for motor_id in range(self.min_motor_id, self.max_motor_id + 1):
-            for trial in range(self.num_ping_retries):
-                try:
-                    result = self.dxl_io.ping(motor_id)
-                except Exception as ex:
-                    rospy.logerr('Exception thrown while pinging motor %d - %s' % (motor_id, ex))
-                    continue
-                    
-                if result:
-                    self.motors.append(motor_id)
-                    break
+        # for motor_id in range(self.min_motor_id, self.max_motor_id + 1):
+        #     for trial in range(self.num_ping_retries):
+        #         try:
+        #             result = self.dxl_io.ping(motor_id)
+        #         except Exception as ex:
+        #             rospy.logerr('Exception thrown while pinging motor %d - %s' % (motor_id, ex))
+        #             continue
+        #             
+        #         if result:
+        #             self.motors.append(motor_id)
+        #             break
+        while True:
+            try:
+                self.dxl_io.ping(0)
+            except Exception as ex:
+                rospy.logerr('Exception thrown while pinging motor %d - %s' % (motor_id, ex))
+                continue
+          
                     
         if not self.motors:
             rospy.logfatal('%s: No motors found.' % self.port_namespace)

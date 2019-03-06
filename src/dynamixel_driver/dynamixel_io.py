@@ -51,6 +51,7 @@ from binascii import b2a_hex
 from threading import Lock
 
 from dynamixel_const import *
+from head_unit_const import *
 
 exception = None
 
@@ -88,7 +89,15 @@ class DynamixelIO(object):
     def __write_serial(self, data):
         self.ser.flushInput()
         self.ser.flushOutput()
-        print 'write' + str([ord(c) for c in data])
+        # print 'write' + str([ord(c) for c in data])
+        self.ser.write(data) 
+        if self.readback_echo:
+            self.ser.read(len(data))
+
+    def __write_serial_no_flush(self, data):
+        # self.ser.flushInput()
+        self.ser.flushOutput()
+        # print 'write' + str([ord(c) for c in data])
         self.ser.write(data) 
         if self.readback_echo:
             self.ser.read(len(data))
@@ -98,9 +107,10 @@ class DynamixelIO(object):
 
         try:
             data.extend(self.ser.read(4))
-            print 'Read' + str([ord(c) for c in data])
+            # print 'Read' + str([ord(c) for c in data])
             if not data[0:2] == ['\xff', '\xff']: raise Exception('Wrong packet prefix %s' % data[0:2])
             data.extend(self.ser.read(ord(data[3])))
+            # print 'Read' + str([ord(c) for c in data])
             data = array('B', ''.join(data)).tolist() # [int(b2a_hex(byte), 16) for byte in data]
         except Exception, e:
             raise DroppedPacketError('Invalid response received from motor %d. %s' % (servo_id, e))
@@ -108,6 +118,63 @@ class DynamixelIO(object):
         # verify checksum
         checksum = 255 - sum(data[2:-1]) % 256
         if not checksum == data[-1]: raise ChecksumError(servo_id, data, checksum)
+
+        return data
+
+    def __read_response_HU(self, servo_id):
+        data = []
+
+        try:
+            # data.extend(self.ser.read(self.ser.inWaiting()))
+            loop = 0
+            while loop<1000:
+                loop = loop + 1
+                if self.ser.inWaiting() < 5:
+                    # print("Waaaaaait")
+                    continue
+                else:
+                    data.extend(self.ser.read(self.ser.inWaiting()))
+                    break
+            # self.ser.flushInput()
+            # print 'Read' + str([ord(c) for c in data])
+            # print 'Read' + str([ord(c) for c in data])
+            data = array('B', ''.join(data)).tolist() # [int(b2a_hex(byte), 16) for byte in data]
+            # verify checksum
+            checksum = 255 - sum(data[2:-1]) % 256
+            if not checksum == data[-1]: raise ChecksumError(servo_id, data, checksum)
+        except:
+            # raise DroppedPacketError('Invalid response received from motor %d. %s' % (servo_id, e))
+            rospy.loginfo("Invalid response received from head unit.")
+            # raise DroppedPacketError('Invalid response received from head unit')
+
+        return data
+
+    def read_all_buffer(self):
+        data = []
+
+        try:
+            loop = 0
+            while loop < 100:
+                loop = loop + 1
+                if self.ser.inWaiting() < 50:
+                    # print("waiting")
+                    time.sleep(0.002)
+                    # print("Waaaaaait")
+                    continue
+                else:
+                    data.extend(self.ser.read(self.ser.inWaiting()))
+            # self.ser.flushInput()
+            # time.sleep(0.0005)
+            print 'All buffer' + str([ord(c) for c in data])
+            # data.extend(self.ser.read(ord(data[3])))
+            data = array('B', ''.join(data)).tolist() # [int(b2a_hex(byte), 16) for byte in data]
+        except Exception, e:
+            a = 0
+            # raise DroppedPacketError('Invalid response received from motor. %s' % (e))
+
+        # verify checksum
+        # checksum = 255 - sum(data[2:-1]) % 256
+        # if not checksum == data[-1]: raise ChecksumError(servo_id, data, checksum)
 
         return data
 
@@ -137,7 +204,7 @@ class DynamixelIO(object):
 
             # wait for response packet from the motor
             timestamp = time.time()
-            time.sleep(0.0013)#0.00235)
+            time.sleep( 0.0005 )# 0.0013)#0.00235)
 
             # read response
             data = self.__read_response(servo_id)
@@ -145,14 +212,82 @@ class DynamixelIO(object):
 
         return data
 
+    def read_HU(self, servo_id, address, size):
+        """ Read "size" bytes of data from servo with "servo_id" starting at the
+        register with "address". "address" is an integer between 0 and 57. It is
+        recommended to use the constants in module dynamixel_const for readability.
+
+        To read the position from servo with id 1, the method should be called
+        like:
+            read(1, DXL_GOAL_POSITION_L, 2)
+        """
+        # Number of bytes following standard header (0xFF, 0xFF, id, length)
+        length = 4  # instruction, address, size, checksum
+
+        # directly from AX-12 manual:
+        # Check Sum = ~ (ID + LENGTH + INSTRUCTION + PARAM_1 + ... + PARAM_N)
+        # If the calculated value is > 255, the lower byte is the check sum.
+        checksum = 255 - ( (servo_id + length + DXL_READ_DATA + address + size) % 256 )
+
+        # packet: FF  FF  ID LENGTH INSTRUCTION PARAM_1 ... CHECKSUM
+        packet = [0xFF, 0xFF, servo_id, length, DXL_READ_DATA, address, size, checksum]
+        packetStr = array('B', packet).tostring() # same as: packetStr = ''.join([chr(byte) for byte in packet])
+
+        with self.serial_mutex:
+            self.__write_serial(packetStr)
+
+            # wait for response packet from the motor
+            timestamp = time.time()
+            ###########       Be carefull      ##############
+            time.sleep(0.015) #0.00235)  The time has to be longer than max retrun time from Head Unit (Arduino 12[ms]
+            ###########  when you change this ##############
+            # time.sleep(0.0013)#0.00235)
+
+            # read response
+            data = self.__read_response_HU(servo_id)
+            # data.append(timestamp)
+
+        return data
+
+    def read_command(self, servo_id, address, size):
+        """ Read "size" bytes of data from servo with "servo_id" starting at the
+        register with "address". "address" is an integer between 0 and 57. It is
+        recommended to use the constants in module dynamixel_const for readability.
+
+        To read the position from servo with id 1, the method should be called
+        like:
+            read(1, DXL_GOAL_POSITION_L, 2)
+        """
+        # Number of bytes following standard header (0xFF, 0xFF, id, length)
+        length = 4  # instruction, address, size, checksum
+
+        # directly from AX-12 manual:
+        # Check Sum = ~ (ID + LENGTH + INSTRUCTION + PARAM_1 + ... + PARAM_N)
+        # If the calculated value is > 255, the lower byte is the check sum.
+        checksum = 255 - ( (servo_id + length + DXL_READ_DATA + address + size) % 256 )
+
+        # packet: FF  FF  ID LENGTH INSTRUCTION PARAM_1 ... CHECKSUM
+        packet = [0xFF, 0xFF, servo_id, length, DXL_READ_DATA, address, size, checksum]
+        packetStr = array('B', packet).tostring() # same as: packetStr = ''.join([chr(byte) for byte in packet])
+
+        with self.serial_mutex:
+            self.__write_serial_no_flush(packetStr)
+
+            # wait for response packet from the motor
+            timestamp = time.time()
+            # print("waitting")
+            ###########       Be carefull      ##############
+            time.sleep(0.0003)#0.0025)
+            ###########  when you change this ##############
+
     def write_without_response(self, servo_id, address, data): 
-	# Number of bytes following standard header (0xFF, 0xFF, id, length)
+        # Number of bytes following standard header (0xFF, 0xFF, id, length)
         length = 3 + len(data)  # instruction, address, len(data), checksum
 
         # directly from AX-12 manual:
         # Check Sum = ~ (ID + LENGTH + INSTRUCTION + PARAM_1 + ... + PARAM_N)
         # If the calculated value is > 255, the lower byte is the check sum.
-	checksum = 255 - ((servo_id + length + DXL_WRITE_DATA + address + sum(data)) % 256)
+        checksum = 255 - ((servo_id + length + DXL_WRITE_DATA + address + sum(data)) % 256)
 
         # packet: FF  FF  ID LENGTH INSTRUCTION PARAM_1 ... CHECKSUM
         packet = [0xFF, 0xFF, servo_id, length, DXL_WRITE_DATA, address]
@@ -162,10 +297,11 @@ class DynamixelIO(object):
         packetStr = array('B', packet).tostring() # packetStr = ''.join([chr(byte) for byte in packet])
 
         # start_s = rospy.get_time()
-	with self.serial_mutex:
-	    self.__write_serial(packetStr)
-	# end_s = rospy.get_time()
-	# print "Took %f [s]" %(end_s - start_s)
+        with self.serial_mutex:
+            self.__write_serial(packetStr)
+            time.sleep(0.0001)     # 100us wait
+	          # end_s = rospy.get_time()
+	          # print "Took %f [s]" %(end_s - start_s)
     
     def write(self, servo_id, address, data):
         """ Write the values from the "data" list to the servo with "servo_id"
@@ -184,7 +320,7 @@ class DynamixelIO(object):
         # directly from AX-12 manual:
         # Check Sum = ~ (ID + LENGTH + INSTRUCTION + PARAM_1 + ... + PARAM_N)
         # If the calculated value is > 255, the lower byte is the check sum.
-	checksum = 255 - ((servo_id + length + DXL_WRITE_DATA + address + sum(data)) % 256)
+        checksum = 255 - ((servo_id + length + DXL_WRITE_DATA + address + sum(data)) % 256)
 
         # packet: FF  FF  ID LENGTH INSTRUCTION PARAM_1 ... CHECKSUM
         packet = [0xFF, 0xFF, servo_id, length, DXL_WRITE_DATA, address]
@@ -201,7 +337,7 @@ class DynamixelIO(object):
             time.sleep(0.0013)
 
             # read response
-	    data = self.__read_response(servo_id)
+            data = self.__read_response(servo_id)
             data.append(timestamp)
 
         return data
@@ -261,11 +397,11 @@ class DynamixelIO(object):
 
             # wait for response packet from the motor
             timestamp = time.time()
-            time.sleep(0.0013)
+            time.sleep(0.002)
 
             # read response
             try:
-		response = self.__read_response(servo_id)
+                response = self.__read_response(servo_id)
                 response.append(timestamp)
             except Exception, e:
                 response = []
@@ -639,6 +775,24 @@ class DynamixelIO(object):
             self.exception_on_error(response[4], servo_id, 'setting moving speed to %d' % speed)
         return response
 
+    def set_speed_without_response(self, servo_id, speed):
+        """
+        Set the servo with servo_id to the specified goal speed.
+        Speed can be negative only if the dynamixel is in "freespin" mode.
+        """
+        # split speed into 2 bytes
+        speed = int(speed)
+        # print "SPEED is " + str(speed)
+        if speed >= 0:
+            loVal = int(speed % 256)
+            hiVal = int(speed >> 8)
+        else:
+            loVal = int((1023 - speed) % 256)
+            hiVal = int((1023 - speed) >> 8)
+
+        # set two register values with low and high byte for the speed
+        self.write_without_response(servo_id, DXL_GOAL_SPEED_L, (loVal, hiVal))
+
     def set_torque_limit(self, servo_id, torque):
         """
         Sets the value of the maximum torque limit for servo with id servo_id.
@@ -709,6 +863,10 @@ class DynamixelIO(object):
         Set the servo with servo_id to specified position and speed.
         Speed can be negative only if the dynamixel is in "freespin" mode.
         """
+        # if servo_id == 10:
+        # print "set speed : " + str(speed)
+        # print "set position : " + str(position)
+
         # split speed into 2 bytes
         if speed >= 0:
             loSpeedVal = int(speed % 256)
@@ -721,7 +879,7 @@ class DynamixelIO(object):
         loPositionVal = int(position % 256)
         hiPositionVal = int(position >> 8)
 
-        self.write(servo_id, DXL_GOAL_POSITION_L, (loPositionVal, hiPositionVal, loSpeedVal, hiSpeedVal))
+        self.write_without_response(servo_id, DXL_GOAL_POSITION_L, (loPositionVal, hiPositionVal, loSpeedVal, hiSpeedVal))
 
     def set_led(self, servo_id, led_state):
         """
@@ -980,8 +1138,19 @@ class DynamixelIO(object):
         response = self.read(servo_id, DXL_PRESENT_POSITION_L, 2)
         if response:
             self.exception_on_error(response[4], servo_id, 'fetching present position')
-        position = response[5] + (response[6] << 8)
+            position = response[5] + (response[6] << 8)
         return position
+
+    def get_position_for_HU(self, servo_id):
+        """ Reads the servo's position value from its registers. """
+        self.read_command(servo_id, DXL_PRESENT_POSITION_L, 2)
+        # print("call :" + str(servo_id))
+        # time.sleep(0.00022)    #wait 0.178[ms] to receive data
+        # time.sleep(0.00017)    #wait 1[ms] to receive data
+        # if response:
+        #     self.exception_on_error(response[4], servo_id, 'fetching present position')
+        # position = response[5] + (response[6] << 8)
+        # return position
 
     def get_speed(self, servo_id):
         """ Reads the servo's speed value from its registers. """
@@ -1075,6 +1244,29 @@ class DynamixelIO(object):
 
         return bool(response[5])
 
+
+    def get_distance(self, head_id):
+        """
+        Get lidar data.
+        """
+        # start = time.time()
+        response = self.read_HU(head_id, HU_LIDAR_DATA, 1)
+        # response = self.read_long_wait(head_id, HU_LIDAR_DATA, 1)
+        print("distance" + str(response))
+            # print 'Read' + str([ord(c) for c in data])
+        distance = 0
+        if response:
+            for index in range(0, len(response) - 6):
+                if response[index] == 0xff and response[index+1] == 0xff and response[index +2] == head_id:
+                    distance = response[index + 6] + (response[index+5] << 8)
+                    print("distance = " + str(distance))
+        else:
+            distance = 0
+
+        # end = time.time() - start
+        # print ("elapsed_time:{0}".format(end) + "[sec]")
+        
+        return distance
 
     def exception_on_error(self, error_code, servo_id, command_failed):
         global exception

@@ -83,7 +83,7 @@ class SerialProxy():
                  baud_rate='1000000',
                  min_motor_id=10,
                  max_motor_id=38,
-                 update_rate=100,
+                 update_rate=20,
                  diagnostics_rate=1,
                  error_level_temp=75,
                  warn_level_temp=70,
@@ -109,20 +109,19 @@ class SerialProxy():
         self.js.header = Header()
         self.js.header.stamp = rospy.Time.now()
         for i in range(JointNumber):
-            self.js.name[i] = "current_joint" + str(i+1)                #要改正
+            self.js.name[i] = "current_joint" + str(i+1)                #スクリプトから指定できるように要改正
+            print self.js.name[i]
         self.past = rospy.Time.now()
 
         self.actual_rate = update_rate
         self.error_counts = {'non_fatal': 0, 'checksum': 0, 'dropped': 0}
         self.current_state = MotorStateList()
         self.num_ping_retries = 5
-        self.id_offset = 10
         
         self.motor_state_list_pub = rospy.Publisher('motor_states/%s' % self.port_namespace, MotorStateList, queue_size=1)
         self.motor_state_pub = rospy.Publisher("joint_position", SnakeJointData, queue_size=1)
         self.diagnostics_pub = rospy.Publisher('/diagnostics', DiagnosticArray, queue_size=1)
-        # self.scanner_data_pub = rospy.Publisher("scanner_data", PointCloud, queue_size = 10)
-        self.scanner_data_pub = rospy.Publisher("scanner_data", PointCloud, queue_size=1)
+        self.scanner_data_pub = rospy.Publisher("scanner_data", PointCloud, queue_size = 10)
 
     def connect(self):
         try:
@@ -137,17 +136,15 @@ class SerialProxy():
         #     time.sleep(0.01)
         #     self.running = True
         self.InitMotors()
-        # rospy.Subscriber('joint_command', SnakeJointCommand, self.RespondToRequest, queue_size = 5)
         rospy.Subscriber('joint_command', SnakeJointCommand, self.RespondToRequest)
-        # rospy.Subscriber('head_unit_command', SnakeHeadUnitCommand, self.RespondToRequestHU)
+        rospy.Subscriber('head_unit_command', SnakeHeadUnitCommand, self.RespondToRequestHU)
         rospy.loginfo("Initialzation has completed");
 
     def disconnect(self):
         self.running = False
 
     def InitMotors(self):
-        # for MotorID in self.motors:
-        for MotorID in range(10, 39):
+        for MotorID in self.motors:
             #リターンレベル、ディバイダー、マルチターンオフセット、EEROMのロックの設定
             self.dxl_io.write_without_response(MotorID, DXL_RETURN_LEVEL, [0x01])
             sleep(0.01)
@@ -165,42 +162,13 @@ class SerialProxy():
             self.dxl_io.set_angle_limit_ccw_without_response(MotorID, 3071)
             sleep(0.01)
             #目標速度設定
-            self.dxl_io.set_speed_without_response(MotorID, 0)
-            # self.dxl_io.set_speed(MotorID, 70)
+            # self.dxl_io.set_speed_without_response(MotorID, 70)
+            self.dxl_io.set_speed(MotorID, 70)
             sleep(0.01)
 
-            # ヘビ型の角度イニシャライズ 一旦5回ずつ送っておく．
-            # for loop_times in range(5):
-            #     self.dxl_io.set_position_without_response(MotorID, 2023)
-        # Debug
-        i=0
-        while 1:
-            i = i+1
-            start = time.time()
-            d = self.dxl_io.get_distance(50)
-            end = time.time() - start
-            print ("Distance elapsed_time:{0}".format(end*1000)  + "[ms]")
-            start = time.time()
-            for motor_id in range(10, 30):
-                # Just request joint position but don't read serial buffer.
-                pos = self.dxl_io.get_position(motor_id)
-                # print("motor :" + str(motor_id-10) + " pos :" + str(pos)) 
-                # self.dxl_io.get_position_for_HU(motor_id)
-            end = time.time() - start
-            print ("Read elapsed_time:{0}".format(end*1000)  + "[ms]")
-            # time.sleep(0.01)
-            # self.ParseJointAngle(self.dxl_io.read_all_buffer())
-            # start = time.time()
-            if i >10:
-                break
-            # for i in range(0,4):
-            #     self.dxl_io.set_position_and_speed_without_response( i+ self.id_offset, 2048, 500)
-            # end = time.time() -start
-            # print ("Set position elapsed_time:{0}".format(end*1000)  + "[ms]")
-            # end = time.time() - t_total
-            # print ("Total Time:{0}".format(end*1000)  + "[ms]")
-
-            # time.sleep(0.01)
+            #ヘビ型の角度イニシャライズ 一旦5回ずつ送っておく．
+            for loop_times in range(5):
+                self.dxl_io.set_position_without_response(MotorID, 2047)
 
     def ReceiveTargetPosition(self ,joint_data):
         joint_angle = int(2047 - joint_data.value / 360 * 4096)
@@ -210,19 +178,14 @@ class SerialProxy():
         now = rospy.get_rostime()
         i_name = 0
         if data:
-            # print("joint :" + str(data))
+            # print str(data)
             i_num = 0
-            av_list = []
             for index in range(len(data)-6):
                 if data[index] == 0xFF and data[index+1] == 0xFF and data[index+4] == 0x00 and data[index + 2] != 0xFF:
                     joint_data = SnakeJointData()
                     joint_data.timestamp = now
                     joint_data.joint_index = data[index+2] - self.min_motor_id
-                    # print(str(joint_data.joint_index))
-                    if joint_data.joint_index % 2 == 0:
-                        joint_data.value = ((data[index+5] + (data[index+6] << 8))) * 180.0 / 2048.0 - 180
-                    elif joint_data.joint_index % 2 == 1:
-                        joint_data.value = -(((data[index+5] + (data[index+6] << 8))) * 180.0 / 2048.0 -180)
+                    joint_data.value = (2048 - (data[index+5] + (data[index+6] << 8))) * 180.0 / 2048.0
                     # joint_state.name.append("current_joint"+str(data[index+2] - self.min_motor_id))
                     # joint_state.position.append((2048 - (data[index+5] + (data[index+6] << 8))) * 3.141592 / 2048 )
                     # joint_state.position.append((2048 - (data[index+5] + (data[index+6] << 8))))
@@ -230,16 +193,13 @@ class SerialProxy():
                     # print joint_state.name[i_num] + " : " + str(joint_state.position[i_num])
                     # print "joint " + str(joint_data.joint_index) + " : " + str(joint_data.value)
                     # i_num = i_num + 1
-                    if joint_data.value >= -180 and joint_data.value <= 180:
-                        # print("motor: " + str(joint_data.joint_index) + " value: " + str(joint_data.value))
-                        self.motor_state_pub.publish(joint_data)
-            # print 'Read' + str([ord(c) for c in data])
+                    self.motor_state_pub.publish(joint_data)
             # self.motor_state_pub.publish(joint_state)
             # self.motor_state_pub.publish(joint_states)
 
     def RespondToRequest(self, joint_command):
         if joint_command.ping:
-            self.dxl_io.ping(joint_command.joint_index + self.id_offset)
+            self.dxl_io.ping(joint_command.joint_index + 10)
 
         if joint_command.read_position:
             # print "Reading motor state"
@@ -247,83 +207,45 @@ class SerialProxy():
             # print(get_time/ 1000000)
             if joint_command.target_all:
                 # rospy.loginfo("Getting motor states")
-                
-                ###  Parse mode ###
-                # start = time.time()
-                # for motor_id in range(self.min_motor_id, self.max_motor_id+1):
-                #     # Just request joint position but don't read serial buffer.
-                #     self.dxl_io.get_position_for_HU(motor_id)
-                # time.sleep(0.0007)
-                # self.ParseJointAngle(self.dxl_io.read_all_buffer())
-                # end = time.time() -start
-                # print ("ReadJoint elapsed_time:{0}".format(end*1000)  + "[ms]")
-
-                ### Single read mode ###
-                start = time.time()
                 for motor_id in range(self.min_motor_id, self.max_motor_id+1):
-                    now = rospy.get_rostime()
-                    joint_data = SnakeJointData()
-                    joint_data.timestamp = now
-                    joint_data.joint_index = motor_id - 10
-                    pos = self.dxl_io.get_position(motor_id)
-                    if joint_data.joint_index % 2 == 0:
-                        joint_data.value = -pos * 180.0 / 2048.0 - 180
-                    elif joint_data.joint_index % 2 == 1:
-                        joint_data.value = pos * 180.0 / 2048.0 -180
-                    # joint_data.value = pos * 180.0 / 2048.0 - 180
-                    self.motor_state_pub.publish(joint_data)
-                    
-            if joint_command.target_range:
-                
-                ### Parse mode ###
-                # start = time.time()
-                # # rospy.loginfo("Getting motor states from %d to %d", joint_command.start_joint + 10, joint_command.last_joint + 10)
-                # for motor_id in range(joint_command.start_joint + self.min_motor_id, joint_command.last_joint + self.min_motor_id + 1):
-                #     # Just request joint position but don't read serial buffer.
-                #     self.dxl_io.get_position_for_HU(motor_id)
+                # for motor_id in range(10, 14):
+                    # Just request joint position but don't read serial buffer.
+                    self.dxl_io.get_position_for_HU(motor_id)
                 # time.sleep(0.0007)
-                # self.ParseJointAngle(self.dxl_io.read_all_buffer())
-                # end = time.time() -start
-                # print ("ReadJoint elapsed_time:{0}".format(end*1000)  + "[ms]")
-
-                ### Single read mode ###
+                self.ParseJointAngle(self.dxl_io.read_all_buffer())
+                end = time.time() - start
+                # print("Took :" + str(end) + "[s]")
+            if joint_command.target_range:
+                # rospy.loginfo("Getting motor states from %d to %d", joint_command.start_joint + 10, joint_command.last_joint + 10)
                 for motor_id in range(joint_command.start_joint + self.min_motor_id, joint_command.last_joint + self.min_motor_id + 1):
-                    now = rospy.get_rostime()
-                    joint_data = SnakeJointData()
-                    joint_data.timestamp = now
-                    joint_data.joint_index = motor_id - 10
-                    pos = self.dxl_io.get_position(motor_id)
-                    if joint_data.joint_index % 2 == 0:
-                        joint_data.value = -pos * 180.0 / 2048.0 - 180
-                    elif joint_data.joint_index % 2 == 1:
-                        joint_data.value = pos * 180.0 / 2048.0 -180
-                    # Publish joint_state
-                    print "Pub"
-                    self.motor_state_pub.publish(joint_data)
-
+                    # Just request joint position but don't read serial buffer.
+                    self.dxl_io.get_position_for_HU(motor_id)
+                # time.sleep(0.0007)
+                self.ParseJointAngle(self.dxl_io.read_all_buffer())
 
         if joint_command.set_position or joint_command.set_position_time:
             # print "Setting target position"
             start = time.time()
             if joint_command.target_range:
+                print "Target range using"
                 for index in range(joint_command.start_joint, joint_command.last_joint + 1):
                     self.target_position[index - joint_command.start_joint] = int(2047 - joint_command.target_positions[index - joint_command.start_joint] / 360 * 4096)
               
                     if self.joint_torque_on[index]:
-                        self.dxl_io.set_position_without_response(index + self.id_offset, self.target_position[index - joint_command.start_joint])
+                        self.dxl_io.set_position_without_response(index + 10, self.target_position[index - joint_command.start_joint])
                 
                 end = time.time() - start
                 # print("Took :" + str(end) + "[s]")
             else:
                 self.target_position[joint_command.joint_index] = int(2047 - joint_command.target_position / 360 * 4097)
-                self.dxl_io.set_position_without_response(joint_command.joint_index + self.id_offset, self.target_position[joint_command.joint_index])
+                self.dxl_io.set_position_without_response(joint_command.joint_index + 10, self.target_position[joint_command.joint_index])
                 end = time.time() - start
                 # print("Took :" + str(end) + "[s]")
 
         if joint_command.set_pid_gain:
-            self.dxl_io.set_p_gain_without_response(joint_command.joint_index + self.id_offset, joint_command.p_gain)
-            self.dxl_io.set_i_gain_without_response(joint_command.joint_index + self.id_offset, joint_command.i_gain)
-            self.dxl_io.set_d_gain_without_response(joint_command.joint_index + self.id_offset, joint_command.d_gain)
+            self.dxl_io.set_p_gain_without_response(joint_command.joint_index + 10, joint_command.p_gain)
+            self.dxl_io.set_i_gain_without_response(joint_command.joint_index + 10, joint_command.i_gain)
+            self.dxl_io.set_d_gain_without_response(joint_command.joint_index + 10, joint_command.d_gain)
 
         # if joint_command.set_position_velocity:
         #     self.dxl_io.set_position_and_speed_without_response(joint_command.joint_index + 10, joint_command.target_position, joint_commnad.target_velocity)
@@ -332,18 +254,18 @@ class SerialProxy():
             if joint_command.target_all:
                 for i in range(JointNumber):
                     if self.joint_torque_on[i]:
-                        rospy.loginfo("Motor %d torque off" , i + self.id_offset)
-                        self.dxl_io.set_torque_enabled_without_response(i + self.id_offset, 0)
+                        rospy.loginfo("Motor %d torque off" , i + 10)
+                        self.dxl_io.set_torque_enabled_without_response(i + 10, 0)
                         self.joint_torque_on[i] = False
             elif joint_command.target_range:
                 for i in range(joint_command.start_joint, joint_command.last_joint + 1):
-                   rospy.loginfo("Motor %d torque off", i + self.id_offset)
+                   rospy.loginfo("Motor %d torque off", i + 10)
                    self.dxl_io.set_torque_enabled_without_response(i + 10, 0)
                    self.joint_torque_on[i] = False
             else:
                 if self.joint_torque_on[joint_command.joint_index - 1]:
-                    rospy.loginfo("Motor %d torque off" ,joint_command.joint_index + self.id_offset)
-                    self.dxl_io.set_torque_enabled_without_response(joint_command.joint_index + self.id_offset, 0)
+                    rospy.loginfo("Motor %d torque off" ,joint_command.joint_index + 10)
+                    self.dxl_io.set_torque_enabled_without_response(joint_command.joint_index + 10, 0)
                     self.joint_torque_on[joint_command.joint_index - 1] = False 
 
         if joint_command.change_mode_to_active:
@@ -351,7 +273,7 @@ class SerialProxy():
                 for i in range(JointNumber):
                     if self.joint_torque_on[i] == False:
                         self.joint_torque_on[i] = True
-                        self.dxl_io.set_torque_enabled_without_response(i + self.id_offset, 1)
+                        self.dxl_io.set_torque_enabled_without_response(i + 10, 1)
                     else:
                         continue
 
@@ -359,41 +281,24 @@ class SerialProxy():
             self.__publish_diagnostic_information()
 
         if joint_command.read_distance:
-            start = time.time()
             distance = self.dxl_io.get_distance(HU_ID)
-            # distance = 200
-            end = time.time() - start
-            print ("Read Distance elapsed_time:{0}".format(end*1000)  + "[ms]")
-            print("Distance = " + str(distance))
-            if distance >= 5 and distance <= 4000:
-                data = PointCloud()
-                p = Point32()
-                p.x = distance / 100.0
-                p.y = 0
-                p.z = 0
-                data.points.append(p)
-                data.header.stamp = rospy.Time.now()
-                self.scanner_data_pub.publish(data)
-            else:
-                data = PointCloud()
-                p = Point32()
-                p.x = 1000000
-                p.y = 0
-                p.z = 0
-                data.points.append(p)
-                data.header.stamp = rospy.Time.now()
-                self.scanner_data_pub.publish(data)
+            data = PointCloud()
+            p = Point32()
+            p.x = distance / 100.0
+            p.y = 0
+            p.z = 0
+            data.points.append(p)
+            data.header.stamp = rospy.Time.now()
+            self.scanner_data_pub.publish(data)
 
         if joint_command.set_target_velocity:
-            vel = joint_command.target_velocity / 117.07 * 1023
-            vel = int(vel)
-            self.dxl_io.set_speed_without_response(joint_command.joint_index + self.id_offset, vel)
+            self.dxl_io.set_speed_without_response(joint_command.joint_index, joint_command.target_velocity)
 
         if joint_command.set_position_velocity:
-            pos = int(2047 - (joint_command.target_position / 180 * 2048.0))
+            pos = int(2047 - joint_command.target_position / 180 * 2048)
             vel = int(joint_command.target_velocity / 117.07 * 1023)
             print "pos : " + str(joint_command.target_position) + "  speed: " + str(vel)
-            self.dxl_io.set_position_and_speed_without_response(joint_command.joint_index + self.id_offset, pos, vel)
+            self.dxl_io.set_position_and_speed_without_response(joint_command.joint_index, pos, vel)
 
 
     def RespondToRequestHU(self, hu_command):
@@ -454,7 +359,7 @@ class SerialProxy():
         self.motor_static_info = {}
       
         # for motor_id in range(self.min_motor_id, self.max_motor_id + 1):
-        for motor_id in range(0, 40):
+        for motor_id in range(10, 41):
             for trial in range(self.num_ping_retries):
                 try:
                     result = self.dxl_io.ping(motor_id)

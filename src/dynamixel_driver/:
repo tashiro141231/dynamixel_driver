@@ -170,26 +170,25 @@ class SerialProxy():
             sleep(0.01)
 
             # ヘビ型の角度イニシャライズ 一旦5回ずつ送っておく．
-            # for loop_times in range(5):
-            #     self.dxl_io.set_position_without_response(MotorID, 2023)
-        # Debug
+            for loop_times in range(5):
+                self.dxl_io.set_position_without_response(MotorID, 2023)
         i=0
         while 1:
             i = i+1
+            t_total = time.time()
             start = time.time()
             d = self.dxl_io.get_distance(50)
             end = time.time() - start
-            print ("Distance elapsed_time:{0}".format(end*1000)  + "[ms]")
+            print ("Read Distance elapsed_time:{0}".format(end*1000)  + "[ms]")
             start = time.time()
-            for motor_id in range(10, 30):
+            for motor_id in range(10, 39):
                 # Just request joint position but don't read serial buffer.
-                pos = self.dxl_io.get_position(motor_id)
+                # pos = self.dxl_io.get_position(motor_id)
                 # print("motor :" + str(motor_id-10) + " pos :" + str(pos)) 
-                # self.dxl_io.get_position_for_HU(motor_id)
+                self.dxl_io.get_position_for_HU(motor_id)
+            self.ParseJointAngle(self.dxl_io.read_all_buffer())
             end = time.time() - start
-            print ("Read elapsed_time:{0}".format(end*1000)  + "[ms]")
-            # time.sleep(0.01)
-            # self.ParseJointAngle(self.dxl_io.read_all_buffer())
+            print ("Read Joint elapsed_time:{0}".format(end*1000)  + "[ms]")
             # start = time.time()
             if i >10:
                 break
@@ -247,59 +246,24 @@ class SerialProxy():
             # print(get_time/ 1000000)
             if joint_command.target_all:
                 # rospy.loginfo("Getting motor states")
-                
-                ###  Parse mode ###
-                # start = time.time()
-                # for motor_id in range(self.min_motor_id, self.max_motor_id+1):
-                #     # Just request joint position but don't read serial buffer.
-                #     self.dxl_io.get_position_for_HU(motor_id)
-                # time.sleep(0.0007)
-                # self.ParseJointAngle(self.dxl_io.read_all_buffer())
-                # end = time.time() -start
-                # print ("ReadJoint elapsed_time:{0}".format(end*1000)  + "[ms]")
-
-                ### Single read mode ###
                 start = time.time()
                 for motor_id in range(self.min_motor_id, self.max_motor_id+1):
-                    now = rospy.get_rostime()
-                    joint_data = SnakeJointData()
-                    joint_data.timestamp = now
-                    joint_data.joint_index = motor_id - 10
-                    pos = self.dxl_io.get_position(motor_id)
-                    if joint_data.joint_index % 2 == 0:
-                        joint_data.value = -pos * 180.0 / 2048.0 - 180
-                    elif joint_data.joint_index % 2 == 1:
-                        joint_data.value = pos * 180.0 / 2048.0 -180
-                    # joint_data.value = pos * 180.0 / 2048.0 - 180
-                    self.motor_state_pub.publish(joint_data)
-                    
-            if joint_command.target_range:
-                
-                ### Parse mode ###
-                # start = time.time()
-                # # rospy.loginfo("Getting motor states from %d to %d", joint_command.start_joint + 10, joint_command.last_joint + 10)
-                # for motor_id in range(joint_command.start_joint + self.min_motor_id, joint_command.last_joint + self.min_motor_id + 1):
-                #     # Just request joint position but don't read serial buffer.
-                #     self.dxl_io.get_position_for_HU(motor_id)
-                # time.sleep(0.0007)
-                # self.ParseJointAngle(self.dxl_io.read_all_buffer())
-                # end = time.time() -start
+                    # Just request joint position but don't read serial buffer.
+                    self.dxl_io.get_position_for_HU(motor_id)
+                time.sleep(0.0007)
+                self.ParseJointAngle(self.dxl_io.read_all_buffer())
+                end = time.time() -start
                 # print ("ReadJoint elapsed_time:{0}".format(end*1000)  + "[ms]")
-
-                ### Single read mode ###
+            if joint_command.target_range:
+                start = time.time()
+                # rospy.loginfo("Getting motor states from %d to %d", joint_command.start_joint + 10, joint_command.last_joint + 10)
                 for motor_id in range(joint_command.start_joint + self.min_motor_id, joint_command.last_joint + self.min_motor_id + 1):
-                    now = rospy.get_rostime()
-                    joint_data = SnakeJointData()
-                    joint_data.timestamp = now
-                    joint_data.joint_index = motor_id - 10
-                    pos = self.dxl_io.get_position(motor_id)
-                    if joint_data.joint_index % 2 == 0:
-                        joint_data.value = -pos * 180.0 / 2048.0 - 180
-                    elif joint_data.joint_index % 2 == 1:
-                        joint_data.value = pos * 180.0 / 2048.0 -180
-                    # Publish joint_state
-                    print "Pub"
-                    self.motor_state_pub.publish(joint_data)
+                    # Just request joint position but don't read serial buffer.
+                    self.dxl_io.get_position_for_HU(motor_id)
+                time.sleep(0.0007)
+                self.ParseJointAngle(self.dxl_io.read_all_buffer())
+                end = time.time() -start
+                # print ("ReadJoint elapsed_time:{0}".format(end*1000)  + "[ms]")
 
 
         if joint_command.set_position or joint_command.set_position_time:
